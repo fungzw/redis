@@ -287,6 +287,14 @@ robj *createModuleObject(moduleType *mt, void *value) {
     return createObject(OBJ_MODULE,mv);
 }
 
+void myFreeStringObject(robj *o) {
+    serverLog(LL_NOTICE, "MYNOTICE 尝试调用object.c freeStringObject ，只有encoding=raw(0-raw,1-int,8-embstr)时采用执行sdsfree(o->ptr)，当前对应val的encoding：%d", o->encoding);
+    if (o->encoding == OBJ_ENCODING_RAW) {
+        serverLog(LL_NOTICE, "MYNOTICE 尝试调用object.c freeStringObject ，执行sdsfree(o->ptr)");
+        sdsfree(o->ptr);
+    }
+}
+
 void freeStringObject(robj *o) {
     if (o->encoding == OBJ_ENCODING_RAW) {
         sdsfree(o->ptr);
@@ -382,7 +390,34 @@ void decrRefCount(robj *o) {
         zfree(o);
     } else {
         if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
-        if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount--;
+        if (o->refcount != OBJ_SHARED_REFCOUNT) {
+            o->refcount--;
+        }
+    }
+}
+
+void myDecrRefCount(robj *o) {
+    serverLog(LL_NOTICE, "MYNOTICE 调用object.c decrRefCount，对应引用数：%d", o->refcount);
+    if (o->refcount == 1) {
+        serverLog(LL_NOTICE, "MYNOTICE 引用数为1，可以直接删除，对应type：%d（其中0-string，1-list，2-set，3-zset，4-hash，5-module，6-stream）", o->type);
+        switch(o->type) {
+            case OBJ_STRING: myFreeStringObject(o); break;
+            case OBJ_LIST: freeListObject(o); break;
+            case OBJ_SET: freeSetObject(o); break;
+            case OBJ_ZSET: freeZsetObject(o); break;
+            case OBJ_HASH: freeHashObject(o); break;
+            case OBJ_MODULE: freeModuleObject(o); break;
+            case OBJ_STREAM: freeStreamObject(o); break;
+            default: serverPanic("Unknown object type"); break;
+        }
+        serverLog(LL_NOTICE, "MYNOTICE 释放redisObject val,调用zfree释放");
+        zfree(o);
+    } else {
+        if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
+        if (o->refcount != OBJ_SHARED_REFCOUNT) {
+            serverLog(LL_NOTICE, "MYNOTICE 该val的引用数不为1，所以只需要--即可");
+            o->refcount--;
+        }
     }
 }
 
@@ -1448,8 +1483,11 @@ NULL
                 == NULL) return;
         addReplyLongLong(c,o->refcount);
     } else if (!strcasecmp(c->argv[1]->ptr,"encoding") && c->argc == 3) {
+        serverLog(LL_NOTICE, "MYNOTICE object encoding命令寻找key:%s", (sds)(c->argv[2]->ptr));
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))
                 == NULL) return;
+        serverLog(LL_NOTICE, "MYNOTICE object encoding命令已经寻找到了key:%s对应value信息，value的encoding：%d，对应的描述：%s", (sds)(c->argv[2]->ptr), o->encoding,
+                  strEncoding(o->encoding));
         addReplyBulkCString(c,strEncoding(o->encoding));
     } else if (!strcasecmp(c->argv[1]->ptr,"idletime") && c->argc == 3) {
         if ((o = objectCommandLookupOrReply(c,c->argv[2],shared.null[c->resp]))

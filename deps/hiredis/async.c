@@ -86,6 +86,7 @@ static int callbackKeyCompare(void *privdata, const void *key1, const void *key2
 
 static void callbackKeyDestructor(void *privdata, void *key) {
     ((void) privdata);
+
     hi_sdsfree((hisds)key);
 }
 

@@ -2594,6 +2594,7 @@ void execCommandAbort(client *c, sds error);
 
 /* Redis object implementation */
 void decrRefCount(robj *o);
+void myDecrRefCount(robj *o);
 void decrRefCountVoid(void *o);
 void incrRefCount(robj *o);
 robj *makeObjectShared(robj *o);

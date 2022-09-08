@@ -259,9 +259,18 @@ void dictObjectDestructor(dict *d, void *val)
     decrRefCount(val);
 }
 
+void myDictObjectDestructor(dict *d, void *val)
+{
+    UNUSED(d);
+    serverLog(LL_NOTICE, "MYNOTICE 调用server.c dictObjectDestructor释放val");
+    if (val == NULL) return; /* Lazy freeing will set value to NULL. */
+    myDecrRefCount(val);
+}
+
 void dictSdsDestructor(dict *d, void *val)
 {
     UNUSED(d);
+    serverLog(LL_NOTICE, "MYNOTICE 调用server.c dictSdsDestructor 删除key:%s", (sds)val);
     sdsfree(val);
 }
 
@@ -430,7 +439,7 @@ dictType dbDictType = {
     NULL,                       /* val dup */
     dictSdsKeyCompare,          /* key compare */
     dictSdsDestructor,          /* key destructor */
-    dictObjectDestructor,       /* val destructor */
+    myDictObjectDestructor,       /* val destructor */
     dictExpandAllowed,          /* allow to expand */
     dictEntryMetadataSize       /* size of entry metadata in bytes */
 };
@@ -2465,6 +2474,12 @@ void initServer(void) {
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
     /* Create the Redis databases, and initialize other internal state. */
+    serverLog(LL_NOTICE, "MYNOTICE server.c initServer中，初始化各数据库");
+    serverLog(LL_NOTICE, "MYNOTICE 各数据库dict下的dictType采用dbDictType，即，比较函数使用dictSdsKeyCompare，key释放函数dictSdsDestructor，value释放函数dictObjectDestructor");
+    serverLog(LL_NOTICE, "MYNOTICE 各数据库expires下的dictType采用dbExpiresDictType");
+    serverLog(LL_NOTICE, "MYNOTICE 各数据库blocking_keys下的dictType采用keylistDictType");
+    serverLog(LL_NOTICE, "MYNOTICE 各数据库ready_keys下的dictType采用objectKeyPointerValueDictType");
+    serverLog(LL_NOTICE, "MYNOTICE 各数据库watched_keys下的dictType采用keylistDictType");
     for (j = 0; j < server.dbnum; j++) {
         server.db[j].dict = dictCreate(&dbDictType);
         server.db[j].expires = dictCreate(&dbExpiresDictType);

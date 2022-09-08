@@ -35,6 +35,7 @@
 
 #include "fmacros.h"
 
+#include "server.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -465,8 +466,11 @@ dictEntry *dictUnlink(dict *d, const void *key) {
 /* You need to call this function to really free the entry after a call
  * to dictUnlink(). It's safe to call this function with 'he' = NULL. */
 void dictFreeUnlinkedEntry(dict *d, dictEntry *he) {
+    serverLog(LL_NOTICE, "MYNOTICE 执行dictFreeUnlinkEntry方法，将某个dictEntry从dict中删除");
     if (he == NULL) return;
+    serverLog(LL_NOTICE, "MYNOTICE 调用dictFreeKey，将dict和dictEntry的key（key可理解为sds，柔性数组）传入");
     dictFreeKey(d, he);
+    serverLog(LL_NOTICE, "MYNOTICE 调用dictFreeVal，将dict和dictEntry的val传入");
     dictFreeVal(d, he);
     zfree(he);
 }

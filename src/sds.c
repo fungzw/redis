@@ -30,6 +30,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "server.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -193,6 +194,8 @@ sds sdsdup(const sds s) {
 /* Free an sds string. No operation is performed if 's' is NULL. */
 void sdsfree(sds s) {
     if (s == NULL) return;
+    serverLog(LL_NOTICE, "MYNOTICE 调用sdsfree：对应key：%s，获取对应flags低三位表示存储结构类型即s[-1]&SDS_TYPE_MASK：%d，对应sdsHdrSize：%d", s, s[-1]&SDS_TYPE_MASK, sdsHdrSize(s[-1]));
+    serverLog(LL_NOTICE, "MYNOTICE 调用sdsfree：对应key：%s，获取该柔性数组地址减去存储结构类型的sizeof信息就能获取整个redisObject的首地址，再调用s_free首地址，就会一次性连同柔性数组一起释放掉", s);
     s_free((char*)s-sdsHdrSize(s[-1]));
 }
 

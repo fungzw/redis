@@ -36,6 +36,7 @@
 
 #include <signal.h>
 #include <ctype.h>
+#include <stdio.h>
 
 /*-----------------------------------------------------------------------------
  * C-level DB API
@@ -85,6 +86,30 @@ void updateLFU(robj *val) {
  * expired on replicas even if the master is lagging expiring our key via DELs
  * in the replication link. */
 robj *lookupKey(redisDb *db, robj *key, int flags) {
+    // 打印db信息
+    serverLog(LL_NOTICE, "MYNOTICE lookupKey database[%d]，key:%s:", db->id, (sds) key->ptr);
+    serverLog(LL_NOTICE, "MYNOTICE lookupKey 附加了将整个数据库打印出来的步骤-----start");
+    dict *d = db->dict;
+    for (int i = 0; i < 2; ++i) {
+        serverLog(LL_NOTICE, "MYNOTICE database dict ht[%d]", i);
+        if (d->ht_table[i] == NULL) {
+            serverLog(LL_NOTICE, "MYNOTICE database dict ht[%d] is NULL", i);
+        } else {
+            int size = DICTHT_SIZE(d->ht_size_exp[i]);
+            for (int j = 0; j < size; ++j) {
+                dictEntry *want = d->ht_table[i][j];
+                serverLog(LL_NOTICE, "MYNOTICE database dict ht[%d][%d] link:", i, j);
+                while (want != NULL) {
+                    sds key = dictGetKey(want);
+                    serverLog(LL_NOTICE, "MYNOTICE key:%s -> ", key);
+                    want = want->next;
+                }
+                serverLog(LL_NOTICE, "MYNOTICE NULL");
+            }
+        }
+    }
+    serverLog(LL_NOTICE, "MYNOTICE lookupKey 附加了将整个数据库打印出来的步骤-----end");
+    serverLog(LL_NOTICE, "MYNOTICE lookupKey 将返回key对应的value redisObject");
     dictEntry *de = dictFind(db->dict,key->ptr);
     robj *val = NULL;
     if (de) {
@@ -186,9 +211,13 @@ robj *lookupKeyWriteOrReply(client *c, robj *key, robj *reply) {
  *
  * The program is aborted if the key already exists. */
 void dbAdd(redisDb *db, robj *key, robj *val) {
+    serverLog(LL_NOTICE, "MYNOTICE setKey:%s，dbAdd操作中，robj key只取ptr，即字符串信息sds copy，赋值到一个新的dictEntry中", (sds)key->ptr);
     sds copy = sdsdup(key->ptr);
+    serverLog(LL_NOTICE, "MYNOTICE 进行sdsup，即robj key取ptr之前，需要判断整个robj，获取实际需要的长度信息，判断前长度：%d，判断后柔性数组长度：%d，但是判断后的是重新生成了redisObject，并返回柔性数组地址，方便用于反向查找",
+              strlen((sds)key->ptr), strlen(copy));
     dictEntry *de = dictAddRaw(db->dict, copy, NULL);
     serverAssertWithInfo(NULL, key, de != NULL);
+    serverLog(LL_NOTICE, "MYNOTICE setKey:%s，dbAdd操作中，robj value将整体赋值给dictEntry中", copy);
     dictSetVal(db->dict, de, val);
     signalKeyAsReady(db, key, val->type);
     if (server.cluster_enabled) slotToKeyAddEntry(de, db);
@@ -220,6 +249,7 @@ int dbAddRDBLoad(redisDb *db, sds key, robj *val) {
  *
  * The program is aborted if the key was not already present. */
 void dbOverwrite(redisDb *db, robj *key, robj *val) {
+    serverLog(LL_DEBUG, "MYDEBUG 数据库采取覆盖key中value时，是根据db->dict和robj key中的ptr，也就是柔性数组的字符串去寻找，当前database：[%d],key:%s", db->id, (sds)key->ptr);
     dictEntry *de = dictFind(db->dict,key->ptr);
 
     serverAssertWithInfo(NULL,key,de != NULL);
@@ -259,6 +289,7 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
  * The client 'c' argument may be set to NULL if the operation is performed
  * in a context where there is no clear client performing the operation. */
 void setKey(client *c, redisDb *db, robj *key, robj *val, int flags) {
+    serverLog(LL_NOTICE, "MYNOTICE setKey:%s", (sds)key->ptr);
     int keyfound = 0;
 
     if (flags & SETKEY_ALREADY_EXIST)
@@ -267,8 +298,10 @@ void setKey(client *c, redisDb *db, robj *key, robj *val, int flags) {
         keyfound = (lookupKeyWrite(db,key) != NULL);
 
     if (!keyfound) {
+        serverLog(LL_NOTICE, "MYNOTICE setKey:%s，判断数据库中未找到，执行dbAdd操作", (sds)key->ptr);
         dbAdd(db,key,val);
     } else {
+        serverLog(LL_NOTICE, "MYNOTICE setKey:%s，判断数据库中已找到，执行dbOverwrite操作", (sds)key->ptr);
         dbOverwrite(db,key,val);
     }
     incrRefCount(val);
@@ -317,8 +350,10 @@ robj *dbRandomKey(redisDb *db) {
 
 /* Helper for sync and async delete. */
 static int dbGenericDelete(redisDb *db, robj *key, int async) {
+    serverLog(LL_NOTICE, "MYNOTICE 删除key逻辑,key:%s", (sds)key->ptr);
     /* Deleting an entry from the expires dict will not free the sds of
      * the key, because it is shared with the main dictionary. */
+    serverLog(LL_NOTICE, "MYNOTICE 删除key逻辑,key:%s，当db-expires有信息时，尝试从expires中查找并删除", (sds)key->ptr);
     if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
     dictEntry *de = dictUnlink(db->dict,key->ptr);
     if (de) {
@@ -674,11 +709,11 @@ void delGenericCommand(client *c, int lazy) {
     for (j = 1; j < c->argc; j++) {
         expireIfNeeded(c->db,c->argv[j],0);
         int deleted  = lazy ? dbAsyncDelete(c->db,c->argv[j]) :
-                              dbSyncDelete(c->db,c->argv[j]);
+                       dbSyncDelete(c->db,c->argv[j]);
         if (deleted) {
             signalModifiedKey(c,c->db,c->argv[j]);
             notifyKeyspaceEvent(NOTIFY_GENERIC,
-                "del",c->argv[j],c->db->id);
+                                "del",c->argv[j],c->db->id);
             server.dirty++;
             numdel++;
         }
@@ -836,7 +871,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
     /* Object must be NULL (to iterate keys names), or the type of the object
      * must be Set, Sorted Set, or Hash. */
     serverAssert(o == NULL || o->type == OBJ_SET || o->type == OBJ_HASH ||
-                o->type == OBJ_ZSET);
+                 o->type == OBJ_ZSET);
 
     /* Set i to the first option argument. The previous one is the cursor. */
     i = (o == NULL) ? 2 : 3; /* Skip the key argument if needed. */
@@ -915,8 +950,8 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
         do {
             cursor = dictScan(ht, cursor, scanCallback, NULL, privdata);
         } while (cursor &&
-              maxiterations-- &&
-              listLength(keys) < (unsigned long)count);
+                 maxiterations-- &&
+                 listLength(keys) < (unsigned long)count);
     } else if (o->type == OBJ_SET) {
         int pos = 0;
         int64_t ll;
@@ -1006,7 +1041,7 @@ void scanGenericCommand(client *c, robj *o, unsigned long cursor) {
         listDelNode(keys, node);
     }
 
-cleanup:
+    cleanup:
     listSetFreeMethod(keys,decrRefCountVoid);
     listRelease(keys);
 }
@@ -1032,17 +1067,17 @@ char* getObjectTypeName(robj *o) {
         type = "none";
     } else {
         switch(o->type) {
-        case OBJ_STRING: type = "string"; break;
-        case OBJ_LIST: type = "list"; break;
-        case OBJ_SET: type = "set"; break;
-        case OBJ_ZSET: type = "zset"; break;
-        case OBJ_HASH: type = "hash"; break;
-        case OBJ_STREAM: type = "stream"; break;
-        case OBJ_MODULE: {
-            moduleValue *mv = o->ptr;
-            type = mv->type->name;
-        }; break;
-        default: type = "unknown"; break;
+            case OBJ_STRING: type = "string"; break;
+            case OBJ_LIST: type = "list"; break;
+            case OBJ_SET: type = "set"; break;
+            case OBJ_ZSET: type = "zset"; break;
+            case OBJ_HASH: type = "hash"; break;
+            case OBJ_STREAM: type = "stream"; break;
+            case OBJ_MODULE: {
+                moduleValue *mv = o->ptr;
+                type = mv->type->name;
+            }; break;
+            default: type = "unknown"; break;
         }
     }
     return type;
@@ -1150,9 +1185,9 @@ void renameGenericCommand(client *c, int nx) {
     signalModifiedKey(c,c->db,c->argv[1]);
     signalModifiedKey(c,c->db,c->argv[2]);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"rename_from",
-        c->argv[1],c->db->id);
+                        c->argv[1],c->db->id);
     notifyKeyspaceEvent(NOTIFY_GENERIC,"rename_to",
-        c->argv[2],c->db->id);
+                        c->argv[2],c->db->id);
     server.dirty++;
     addReply(c,nx ? shared.cone : shared.ok);
 }
@@ -1219,9 +1254,9 @@ void moveCommand(client *c) {
     signalModifiedKey(c,src,c->argv[1]);
     signalModifiedKey(c,dst,c->argv[1]);
     notifyKeyspaceEvent(NOTIFY_GENERIC,
-                "move_from",c->argv[1],src->id);
+                        "move_from",c->argv[1],src->id);
     notifyKeyspaceEvent(NOTIFY_GENERIC,
-                "move_to",c->argv[1],dst->id);
+                        "move_to",c->argv[1],dst->id);
 
     server.dirty++;
     addReply(c,shared.cone);
@@ -1494,11 +1529,11 @@ void swapdbCommand(client *c) {
 
     /* Get the two DBs indexes. */
     if (getIntFromObjectOrReply(c, c->argv[1], &id1,
-        "invalid first DB index") != C_OK)
+                                "invalid first DB index") != C_OK)
         return;
 
     if (getIntFromObjectOrReply(c, c->argv[2], &id2,
-        "invalid second DB index") != C_OK)
+                                "invalid second DB index") != C_OK)
         return;
 
     /* Swap... */
@@ -1549,7 +1584,7 @@ long long getExpire(redisDb *db, robj *key) {
 
     /* No expire? return ASAP */
     if (dictSize(db->expires) == 0 ||
-       (de = dictFind(db->expires,key->ptr)) == NULL) return -1;
+        (de = dictFind(db->expires,key->ptr)) == NULL) return -1;
 
     /* The entry was found in the expire dict, this means it should also
      * be present in the main dict (safety check). */
@@ -1628,17 +1663,17 @@ int keyIsExpired(redisDb *db, robj *key) {
     if (server.script_caller) {
         now = scriptTimeSnapshot();
     }
-    /* If we are in the middle of a command execution, we still want to use
-     * a reference time that does not change: in that case we just use the
-     * cached time, that we update before each call in the call() function.
-     * This way we avoid that commands such as RPOPLPUSH or similar, that
-     * may re-open the same key multiple times, can invalidate an already
-     * open object in a next call, if the next call will see the key expired,
-     * while the first did not. */
+        /* If we are in the middle of a command execution, we still want to use
+         * a reference time that does not change: in that case we just use the
+         * cached time, that we update before each call in the call() function.
+         * This way we avoid that commands such as RPOPLPUSH or similar, that
+         * may re-open the same key multiple times, can invalidate an already
+         * open object in a next call, if the next call will see the key expired,
+         * while the first did not. */
     else if (server.fixed_time_expire > 0) {
         now = server.mstime;
     }
-    /* For the other cases, we want to use the most fresh time we have. */
+        /* For the other cases, we want to use the most fresh time we have. */
     else {
         now = mstime();
     }
@@ -1868,7 +1903,7 @@ int getKeysUsingKeySpecs(struct redisCommand *cmd, robj **argv, int argc, int se
         /* Done with this spec */
         continue;
 
-invalid_spec:
+        invalid_spec:
         if (search_flags & GET_KEYSPEC_RETURN_PARTIAL) {
             continue;
         } else {
@@ -1930,8 +1965,8 @@ int getKeysFromCommandWithSpecs(struct redisCommand *cmd, robj **argv, int argc,
 /* This function returns a sanity check if the command may have keys. */
 int doesCommandHaveKeys(struct redisCommand *cmd) {
     return cmd->getkeys_proc ||                                 /* has getkeys_proc (non modules) */
-        (cmd->flags & CMD_MODULE_GETKEYS) ||                    /* module with GETKEYS */
-        (getAllKeySpecsFlags(cmd, 1) & CMD_KEY_NOT_KEY);        /* has at least one key-spec not marked as NOT_KEY */
+           (cmd->flags & CMD_MODULE_GETKEYS) ||                    /* module with GETKEYS */
+           (getAllKeySpecsFlags(cmd, 1) & CMD_KEY_NOT_KEY);        /* has at least one key-spec not marked as NOT_KEY */
 }
 
 /* A simplified channel spec table that contains all of the redis commands
@@ -1945,15 +1980,15 @@ typedef struct ChannelSpecs {
 } ChannelSpecs;
 
 ChannelSpecs commands_with_channels[] = {
-    {subscribeCommand, CMD_CHANNEL_SUBSCRIBE, 1, -1},
-    {ssubscribeCommand, CMD_CHANNEL_SUBSCRIBE, 1, -1},
-    {unsubscribeCommand, CMD_CHANNEL_UNSUBSCRIBE, 1, -1},
-    {sunsubscribeCommand, CMD_CHANNEL_UNSUBSCRIBE, 1, -1},
-    {psubscribeCommand, CMD_CHANNEL_PATTERN | CMD_CHANNEL_SUBSCRIBE, 1, -1},
-    {punsubscribeCommand, CMD_CHANNEL_PATTERN | CMD_CHANNEL_UNSUBSCRIBE, 1, -1},
-    {publishCommand, CMD_CHANNEL_PUBLISH, 1, 1},
-    {spublishCommand, CMD_CHANNEL_PUBLISH, 1, 1},
-    {NULL,0} /* Terminator. */
+        {subscribeCommand, CMD_CHANNEL_SUBSCRIBE, 1, -1},
+        {ssubscribeCommand, CMD_CHANNEL_SUBSCRIBE, 1, -1},
+        {unsubscribeCommand, CMD_CHANNEL_UNSUBSCRIBE, 1, -1},
+        {sunsubscribeCommand, CMD_CHANNEL_UNSUBSCRIBE, 1, -1},
+        {psubscribeCommand, CMD_CHANNEL_PATTERN | CMD_CHANNEL_SUBSCRIBE, 1, -1},
+        {punsubscribeCommand, CMD_CHANNEL_PATTERN | CMD_CHANNEL_UNSUBSCRIBE, 1, -1},
+        {publishCommand, CMD_CHANNEL_PUBLISH, 1, 1},
+        {spublishCommand, CMD_CHANNEL_PUBLISH, 1, 1},
+        {NULL,0} /* Terminator. */
 };
 
 /* Returns 1 if the command may access any channels matched by the flags
@@ -2105,7 +2140,7 @@ void getKeysFreeResult(getKeysResult *result) {
  * 
  * The commands using this functoin have a fully defined keyspec, so returning flags isn't needed. */
 int genericGetKeys(int storeKeyOfs, int keyCountOfs, int firstKeyOfs, int keyStep,
-                    robj **argv, int argc, getKeysResult *result) {
+                   robj **argv, int argc, getKeysResult *result) {
     int i, num;
     keyReference *keys;
 
@@ -2125,12 +2160,12 @@ int genericGetKeys(int storeKeyOfs, int keyCountOfs, int firstKeyOfs, int keySte
     for (i = 0; i < num; i++) {
         keys[i].pos = firstKeyOfs+(i*keyStep);
         keys[i].flags = 0;
-    } 
+    }
 
     if (storeKeyOfs) {
         keys[num].pos = storeKeyOfs;
         keys[num].flags = 0;
-    } 
+    }
     return result->numkeys;
 }
 
@@ -2228,10 +2263,10 @@ int sortGetKeys(struct redisCommand *cmd, robj **argv, int argc, getKeysResult *
         char *name;
         int skip;
     } skiplist[] = {
-        {"limit", 2},
-        {"get", 1},
-        {"by", 1},
-        {NULL, 0} /* End of elements. */
+            {"limit", 2},
+            {"get", 1},
+            {"by", 1},
+            {NULL, 0} /* End of elements. */
     };
 
     for (i = 2; i < argc; i++) {
@@ -2281,7 +2316,7 @@ int migrateGetKeys(struct redisCommand *cmd, robj **argv, int argc, getKeysResul
     for (i = 0; i < num; i++) {
         keys[i].pos = first+i;
         keys[i].flags = CMD_KEY_RW | CMD_KEY_ACCESS | CMD_KEY_DELETE;
-    } 
+    }
     result->numkeys = num;
     return num;
 }
@@ -2322,8 +2357,8 @@ int georadiusGetKeys(struct redisCommand *cmd, robj **argv, int argc, getKeysRes
     keys[0].pos = 1;
     keys[0].flags = 0;
     if(num > 1) {
-         keys[1].pos = stored_key;
-         keys[1].flags = 0;
+        keys[1].pos = stored_key;
+        keys[1].flags = 0;
     }
     result->numkeys = num;
     return num;
@@ -2373,8 +2408,8 @@ int xreadGetKeys(struct redisCommand *cmd, robj **argv, int argc, getKeysResult 
     keys = getKeysPrepareResult(result, num);
     for (i = streams_pos+1; i < argc-num; i++) {
         keys[i-streams_pos-1].pos = i;
-        keys[i-streams_pos-1].flags = 0; 
-    } 
+        keys[i-streams_pos-1].flags = 0;
+    }
     result->numkeys = num;
     return num;
 }
