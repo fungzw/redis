@@ -87,7 +87,7 @@ void updateLFU(robj *val) {
  * in the replication link. */
 robj *lookupKey(redisDb *db, robj *key, int flags) {
     // 打印db信息
-    serverLog(LL_NOTICE, "MYNOTICE lookupKey database[%d]，key:%s:", db->id, (sds) key->ptr);
+    serverLog(LL_NOTICE, "MYNOTICE lookupKey database[%d]，key:%s", db->id, (sds) key->ptr);
     serverLog(LL_NOTICE, "MYNOTICE lookupKey 附加了将整个数据库打印出来的步骤-----start");
     dict *d = db->dict;
     for (int i = 0; i < 2; ++i) {

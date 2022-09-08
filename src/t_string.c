@@ -284,6 +284,7 @@ int parseExtendedStringArgumentsOrReply(client *c, int *flags, int *unit, robj *
 /* SET key value [NX] [XX] [KEEPTTL] [GET] [EX <seconds>] [PX <milliseconds>]
  *     [EXAT <seconds-timestamp>][PXAT <milliseconds-timestamp>] */
 void setCommand(client *c) {
+    serverLog(LL_NOTICE, "MYNOTICE 执行t_string.c setCommand");
     robj *expire = NULL;
     int unit = UNIT_SECONDS;
     int flags = OBJ_NO_FLAGS;
@@ -292,7 +293,8 @@ void setCommand(client *c) {
         return;
     }
 
-    c->argv[2] = tryObjectEncoding(c->argv[2]);
+    //c->argv[2] = tryObjectEncoding(c->argv[2]);
+    c->argv[2] = myTryObjectEncoding(c->argv[2]); // 用于调试信息
     setGenericCommand(c,flags,c->argv[1],c->argv[2],expire,unit,NULL,NULL);
 }
 

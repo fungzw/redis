@@ -84,7 +84,39 @@ robj *createRawStringObject(const char *ptr, size_t len) {
  * allocated in the same chunk as the object itself. */
 robj *createEmbeddedStringObject(const char *ptr, size_t len) {
     robj *o = zmalloc(sizeof(robj)+sizeof(struct sdshdr8)+len+1);
+    serverLog(LL_NOTICE, "MYNOTICE 创建embeddedString,val:%s，调用object.c createEmbeddedStringObject，使用zmalloc一次性申请sizeof(robj)+sizeof(struct sdshdr8)+len+1，: %d, %d , %d , %d，共：%d字节大小", ptr, sizeof(robj),sizeof(struct sdshdr8),len,1,sizeof(robj)+sizeof(struct sdshdr8)+len+1);
     struct sdshdr8 *sh = (void*)(o+1);
+    serverLog(LL_NOTICE, "MYNOTICE 创建了redisObject之后,val:%s，使用(obj+1)移动到sdshdr8地址，obj地址：%p，hdr地址：%p", ptr, o, sh);
+
+    o->type = OBJ_STRING;
+    o->encoding = OBJ_ENCODING_EMBSTR;
+    o->ptr = sh+1;
+    o->refcount = 1;
+    if (server.maxmemory_policy & MAXMEMORY_FLAG_LFU) {
+        o->lru = (LFUGetTimeInMinutes()<<8) | LFU_INIT_VAL;
+    } else {
+        o->lru = LRU_CLOCK();
+    }
+
+    sh->len = len;
+    sh->alloc = len;
+    sh->flags = SDS_TYPE_8;
+    if (ptr == SDS_NOINIT)
+        sh->buf[len] = '\0';
+    else if (ptr) {
+        memcpy(sh->buf,ptr,len);
+        sh->buf[len] = '\0';
+    } else {
+        memset(sh->buf,0,len+1);
+    }
+    return o;
+}
+
+robj *myCreateEmbeddedStringObject(const char *ptr, size_t len) {
+    robj *o = zmalloc(sizeof(robj)+sizeof(struct sdshdr8)+len+1);
+    serverLog(LL_NOTICE, "MYNOTICE 创建embeddedString，调用object.c createEmbeddedStringObject，使用zmalloc一次性申请sizeof(robj)+sizeof(struct sdshdr8)+len+1，: %d, %d , %d , %d，共：%d字节大小", sizeof(robj),sizeof(struct sdshdr8),len,1,sizeof(robj)+sizeof(struct sdshdr8)+len+1);
+    struct sdshdr8 *sh = (void*)(o+1);
+    serverLog(LL_NOTICE, "MYNOTICE 创建了redisObject之后，使用(obj+1)移动到sdshdr8地址，obj地址：%p，hdr地址：%p", o, sh);
 
     o->type = OBJ_STRING;
     o->encoding = OBJ_ENCODING_EMBSTR;
@@ -695,6 +727,89 @@ robj *tryObjectEncoding(robj *o) {
 
         if (o->encoding == OBJ_ENCODING_EMBSTR) return o;
         emb = createEmbeddedStringObject(s,sdslen(s));
+        decrRefCount(o);
+        return emb;
+    }
+
+    /* We can't encode the object...
+     *
+     * Do the last try, and at least optimize the SDS string inside
+     * the string object to require little space, in case there
+     * is more than 10% of free space at the end of the SDS string.
+     *
+     * We do that only for relatively large strings as this branch
+     * is only entered if the length of the string is greater than
+     * OBJ_ENCODING_EMBSTR_SIZE_LIMIT. */
+    trimStringObjectIfNeeded(o);
+
+    /* Return the original object. */
+    return o;
+}
+
+/* Try to encode a string object in order to save space */
+robj *myTryObjectEncoding(robj *o) {
+    serverLog(LL_NOTICE, "MYNOTICE object.c tryObjectEncoding 尝试编码client的string redisObject val，并返回redisObject val对象");
+    long value;
+    sds s = o->ptr;
+    size_t len;
+
+    /* Make sure this is a string object, the only type we encode
+     * in this function. Other types use encoded memory efficient
+     * representations but are handled by the commands implementing
+     * the type. */
+    serverAssertWithInfo(NULL,o,o->type == OBJ_STRING);
+
+    /* We try some specialized encoding only for objects that are
+     * RAW or EMBSTR encoded, in other words objects that are still
+     * in represented by an actually array of chars. */
+    if (!sdsEncodedObject(o)) return o;
+
+    /* It's not safe to encode shared objects: shared objects can be shared
+     * everywhere in the "object space" of Redis and may end in places where
+     * they are not handled. We handle them only as values in the keyspace. */
+    if (o->refcount > 1) return o;
+
+    /* Check if we can represent this string as a long integer.
+     * Note that we are sure that a string larger than 20 chars is not
+     * representable as a 32 nor 64 bit integer. */
+    len = sdslen(s);
+    serverLog(LL_NOTICE, "MYNOTICE 对应的string val：%s，调用sdslen(s)获取长度：%d", s, len);
+    if (len <= 20 && string2l(s,len,&value)) {
+        /* This object is encodable as a long. Try to use a shared object.
+         * Note that we avoid using shared integers when maxmemory is used
+         * because every object needs to have a private LRU field for the LRU
+         * algorithm to work well. */
+        if ((server.maxmemory == 0 ||
+             !(server.maxmemory_policy & MAXMEMORY_FLAG_NO_SHARED_INTEGERS)) &&
+            value >= 0 &&
+            value < OBJ_SHARED_INTEGERS)
+        {
+            decrRefCount(o);
+            incrRefCount(shared.integers[value]);
+            return shared.integers[value];
+        } else {
+            if (o->encoding == OBJ_ENCODING_RAW) {
+                sdsfree(o->ptr);
+                o->encoding = OBJ_ENCODING_INT;
+                o->ptr = (void*) value;
+                return o;
+            } else if (o->encoding == OBJ_ENCODING_EMBSTR) {
+                decrRefCount(o);
+                return createStringObjectFromLongLongForValue(value);
+            }
+        }
+    }
+
+    /* If the string is small and is still RAW encoded,
+     * try the EMBSTR encoding which is more efficient.
+     * In this representation the object and the SDS string are allocated
+     * in the same chunk of memory to save space and cache misses. */
+    if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT) {
+        serverLog(LL_NOTICE, "MYNOTICE string val:%s,len 小于embstr的限制，所以最终构造embstr编码的redisObject", s);
+        robj *emb;
+
+        if (o->encoding == OBJ_ENCODING_EMBSTR) return o;
+        emb = myCreateEmbeddedStringObject(s,sdslen(s));
         decrRefCount(o);
         return emb;
     }
